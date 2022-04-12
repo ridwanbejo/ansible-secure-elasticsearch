@@ -1,0 +1,216 @@
+---
+- name: my-elasticsearch
+  hosts: elasticsearch
+  become: true
+  vars:
+    es_master_node: "ec2-13-229-205-143.ap-southeast-1.compute.amazonaws.com"
+    es_unicast_hosts: '["ec2-13-229-205-143.ap-southeast-1.compute.amazonaws.com", "ec2-18-142-48-202.ap-southeast-1.compute.amazonaws.com", "ec2-18-141-174-119.ap-southeast-1.compute.amazonaws.com"]'
+    es_config_path: "/etc/elasticsearch/elasticsearch.yml"
+    my_password: "Test@12345"
+  tasks:
+    - name: update ubuntu repository
+      command: apt update
+      tags:
+        - install-elasticsearch
+
+    - name: add public GPG key to APT
+      shell: curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+      tags:
+        - install-elasticsearch
+
+    - name: add elastic source list to sources.list.d
+      shell: echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | tee -a /etc/apt/sources.list.d/elastic-7.x.list
+      tags:
+        - install-elasticsearch
+
+    - name: update APT package lists
+      command: apt-get update
+      tags:
+        - install-elasticsearch
+
+    - name: install unzip package
+      command: apt install unzip
+      tags:
+        - install-elasticsearch
+
+    - name: install python pip package
+      command: apt install python3-pip -y
+      tags:
+        - install-elasticsearch
+
+    - name: install pexpect package
+      command: pip3 install pexpect
+      tags:
+        - install-elasticsearch
+
+    - name: install elasticsearch package
+      command: apt install elasticsearch
+      tags:
+        - install-elasticsearch
+
+    - name: enable elasticsearch service
+      command: systemctl enable elasticsearch
+      tags:
+        - install-elasticsearch
+
+    - name: start elasticsearch service
+      service:
+        name: elasticsearch
+        state: started
+      tags:
+        - install-elasticsearch
+
+    - name: enable elasticsearch basic auth
+      template:
+        src: templates/elasticsearch-multi-nodes.yml
+        dest: "{{ es_config_path }}"
+        owner: root
+        group: elasticsearch
+        mode: '0644'
+      tags:
+        - secure-access
+
+    - name: restart elasticsearch service
+      service:
+        name: elasticsearch
+        state: restarted
+      tags:
+        - secure-access
+
+    - name: create password for elastic stack
+      ansible.builtin.expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-setup-passwords interactive
+        responses:  
+          "Please confirm that you would like to continue": "y"
+          "Enter password for": "{{ my_password }}"
+          "Reenter password for": "{{ my_password }}" 
+          "Enter password for": "{{ my_password }}" 
+          "Reenter password for": "{{ my_password }}" 
+          "Enter password for": "{{ my_password }}" 
+          "Reenter password for": "{{ my_password }}" 
+          "Enter password for": "{{ my_password }}"
+          "Reenter password for": "{{ my_password }}" 
+          "Enter password for": "{{ my_password }}" 
+          "Reenter password for": "{{ my_password }}" 
+          "Enter password for": "{{ my_password }}" 
+          "Reenter password for": "{{ my_password }}"
+        timeout: 60
+      tags:
+        - secure-access
+
+    - name: create elasticsearch ca
+      ansible.builtin.expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-certutil ca
+        responses:  
+          "Please enter the desired output file": "elastic-stack-ca.p12"
+          "Enter password for": "{{ my_password }}"
+        timeout: 30
+      tags:
+        - secure-access
+
+    - name: create elasticsearch ca certificate
+      ansible.builtin.expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-certutil cert --ca elastic-stack-ca.p12
+        responses:  
+          "Enter password for CA": "{{ my_password }}"
+          "Please enter the desired output file": "elastic-certificates.p12"
+          "Enter password for": "{{ my_password }}"
+        timeout: 30
+      tags:
+        - secure-access
+
+    - name: Create a certificates directory if it does not exist
+      ansible.builtin.file:
+        path: /etc/elasticsearch/certificates
+        state: directory
+        mode: '0755'
+
+    - name: Move the certificates to elasticsearch directory
+      shell: mv /usr/share/elasticsearch/*.p12 /etc/elasticsearch/certificates
+
+    - name: change owner and group certificates directory to elasticsearch
+      ansible.builtin.file:
+        path: /etc/elasticsearch/certificates
+        state: directory
+        recurse: yes
+        owner: elasticsearch
+        group: elasticsearch
+
+    - name: add xpack secure password to keystore
+      ansible.builtin.expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-keystore add xpack.security.transport.ssl.keystore.secure_password
+        responses:  
+          "Enter value for xpack.security.transport.ssl.keystore.secure_password": "{{ my_password }}"
+        timeout: 30
+      tags:
+        - secure-access
+
+    - name: add xpack secure password to truststore
+      ansible.builtin.expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-keystore add xpack.security.transport.ssl.truststore.secure_password
+        responses:  
+          "Enter value for xpack.security.transport.ssl.truststore.secure_password": "{{ my_password }}"
+        timeout: 30
+      tags:
+        - secure-access
+
+    # it should be performed once in master node. Then copy the certificate to data nodes. But I can't find how to transfer the certificate
+    - name: insert ssl verification mode
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'xpack.security.transport.ssl.verification_mode: certificate'
+        insertafter: EOF
+      tags:
+        - secure-access
+
+    # it should be performed once in master node. Then copy the certificate to data nodes. But I can't find how to transfer the certificate
+    - name: insert ssl client authentication
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'xpack.security.transport.ssl.client_authentication: required'
+        insertafter: EOF
+      tags:
+        - secure-access
+
+    # it should be performed once in master node. Then copy the certificate to data nodes. But I can't find how to transfer the certificate
+    - name: insert ssl keystore path
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'xpack.security.transport.ssl.keystore.path: certificates/elastic-certificates.p12'
+        insertafter: EOF
+      tags:
+        - secure-access
+
+    # it should be performed once in master node. Then copy the certificate to data nodes. But I can't find how to transfer the certificate
+    - name: insert ssl truststore path
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'xpack.security.transport.ssl.truststore.path: certificates/elastic-certificates.p12'
+        insertafter: EOF
+      tags:
+        - secure-access
+
+    - name: tag node as master
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'node.master: true'
+        insertafter: EOF
+      when: inventory_hostname == es_master_node
+
+    - name: tag node as data
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'node.data: true'
+        insertafter: EOF
+      when: inventory_hostname != es_master_node
+    
+    - name: specify unicast hosts
+      lineinfile:
+        path: "{{ es_config_path }}"
+        line: 'discovery.zen.ping.unicast.hosts: {{ es_unicast_hosts }}'
+        insertafter: EOF    
+
+    - name: restart elasticsearch service
+      service:
+        name: elasticsearch
+        state: restarted

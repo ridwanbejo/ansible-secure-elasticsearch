@@ -1,0 +1,29 @@
+#1. installing elasticsearch
+
+apt-update
+
+apt install elasticsearch
+
+replace network.host and discovery.seed_hosts with: ec2-3-1-50-69.ap-southeast-1.compute.amazonaws.com:9200
+
+curl -XGET -u http://ec2-3-1-50-69.ap-southeast-1.compute.amazonaws.com:9200/?pretty
+
+#2. configure basic auth for Elasticsearch
+
+enable xpack on elasticsearch.yml
+
+/usr/share/elasticsearch/bin/elasticsearch-setup-passwords interactive
+
+elastic:Test@12345
+apm_system:Test@12345
+kibana_system:Test@12345
+logstash_system:Test@12345
+beats_system:Test@12345
+remote_monitoring_users:Test@12345
+
+curl -XGET -u elastic:Test@12345 http://ec2-3-1-50-69.ap-southeast-1.compute.amazonaws.com:9200/?pretty
+
+#3. restart elasticsearch to load all changes
+
+systemctl restart elasticsearch
+
